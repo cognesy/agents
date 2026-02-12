@@ -1,23 +1,7 @@
 <?php declare(strict_types=1);
 
-namespace Cognesy\Agents\Broadcasting;
+namespace Cognesy\Agents\Events;
 
-use Cognesy\Agents\Events\AgentExecutionCompleted;
-use Cognesy\Agents\Events\AgentExecutionFailed;
-use Cognesy\Agents\Events\AgentExecutionStarted;
-use Cognesy\Agents\Events\AgentStepCompleted;
-use Cognesy\Agents\Events\AgentStepStarted;
-use Cognesy\Agents\Events\ContinuationEvaluated;
-use Cognesy\Agents\Events\DecisionExtractionFailed;
-use Cognesy\Agents\Events\HookExecuted;
-use Cognesy\Agents\Events\InferenceRequestStarted;
-use Cognesy\Agents\Events\InferenceResponseReceived;
-use Cognesy\Agents\Events\SubagentCompleted;
-use Cognesy\Agents\Events\SubagentSpawning;
-use Cognesy\Agents\Events\ToolCallBlocked;
-use Cognesy\Agents\Events\ToolCallCompleted;
-use Cognesy\Agents\Events\ToolCallStarted;
-use Cognesy\Agents\Events\ValidationFailed;
 use Cognesy\Events\Event;
 use DateTimeImmutable;
 
