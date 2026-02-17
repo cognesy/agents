@@ -13,7 +13,6 @@ use Cognesy\Agents\Drivers\CanUseTools;
 use Cognesy\Agents\Events\InferenceRequestStarted;
 use Cognesy\Agents\Events\InferenceResponseReceived;
 use Cognesy\Agents\Tool\Contracts\CanExecuteToolCalls;
-use Cognesy\Events\Contracts\CanAcceptEventHandler;
 use Cognesy\Events\Contracts\CanHandleEvents;
 use Cognesy\Events\EventBusResolver;
 use Cognesy\Http\HttpClient;
@@ -21,11 +20,14 @@ use Cognesy\Messages\Message;
 use Cognesy\Messages\Messages;
 use Cognesy\Polyglot\Inference\Collections\ToolCalls;
 use Cognesy\Polyglot\Inference\Config\InferenceRetryPolicy;
-use Cognesy\Polyglot\Inference\Contracts\CanAcceptLLMProvider;
+use Cognesy\Polyglot\Inference\Config\LLMConfig;
+use Cognesy\Polyglot\Inference\Contracts\CanAcceptLLMConfig;
+use Cognesy\Polyglot\Inference\Contracts\CanCreateInference;
 use Cognesy\Polyglot\Inference\Data\CachedInferenceContext;
+use Cognesy\Polyglot\Inference\Data\InferenceRequest;
 use Cognesy\Polyglot\Inference\Data\InferenceResponse;
 use Cognesy\Polyglot\Inference\Enums\OutputMode;
-use Cognesy\Polyglot\Inference\Inference;
+use Cognesy\Polyglot\Inference\InferenceRuntime;
 use Cognesy\Polyglot\Inference\LLMProvider;
 use Cognesy\Polyglot\Inference\PendingInference;
 use Cognesy\Utils\Json\Json;
@@ -38,7 +40,7 @@ use Override;
  * generating a response based on input messages, selecting and invoking tools,
  * handling tool execution results, and crafting follow-up messages.
  */
-class ToolCallingDriver implements CanUseTools, CanAcceptEventHandler, CanAcceptLLMProvider, CanAcceptMessageCompiler
+class ToolCallingDriver implements CanUseTools, CanAcceptLLMConfig, CanAcceptMessageCompiler
 {
     private LLMProvider $llm;
     private ?HttpClient $httpClient = null;
@@ -52,8 +54,10 @@ class ToolCallingDriver implements CanUseTools, CanAcceptEventHandler, CanAccept
     private bool $parallelToolCalls = false;
     private ToolExecutionFormatter $formatter;
     private CanHandleEvents $events;
+    private CanCreateInference $inference;
 
     public function __construct(
+        CanCreateInference $inference,
         ?LLMProvider $llm = null,
         ?HttpClient  $httpClient = null,
         string|array $toolChoice = 'auto',
@@ -65,6 +69,7 @@ class ToolCallingDriver implements CanUseTools, CanAcceptEventHandler, CanAccept
         ?InferenceRetryPolicy $retryPolicy = null,
         ?CanHandleEvents $events = null,
     ) {
+        $this->inference = $inference;
         $this->llm = $llm ?? LLMProvider::new();
         $this->httpClient = $httpClient;
         $this->toolChoice = $toolChoice;
@@ -79,39 +84,15 @@ class ToolCallingDriver implements CanUseTools, CanAcceptEventHandler, CanAccept
     }
 
     #[\Override]
-    public function withLLMProvider(LLMProvider $llm): static {
-        return new self(
+    public function withLLMConfig(LLMConfig $config): static {
+        $llm = $this->llm->withLLMConfig($config);
+        return $this->with(
             llm: $llm,
-            httpClient: $this->httpClient,
-            toolChoice: $this->toolChoice,
-            responseFormat: $this->responseFormat,
-            model: $this->model,
-            options: $this->options,
-            mode: $this->mode,
-            messageCompiler: $this->messageCompiler,
-            retryPolicy: $this->retryPolicy,
-            events: $this->events,
-        );
-    }
-
-    #[\Override]
-    public function llmProvider(): LLMProvider {
-        return $this->llm;
-    }
-
-    #[\Override]
-    public function withEventHandler(CanHandleEvents $events): static {
-        return new self(
-            llm: $this->llm,
-            httpClient: $this->httpClient,
-            toolChoice: $this->toolChoice,
-            responseFormat: $this->responseFormat,
-            model: $this->model,
-            options: $this->options,
-            mode: $this->mode,
-            messageCompiler: $this->messageCompiler,
-            retryPolicy: $this->retryPolicy,
-            events: $events,
+            inference: InferenceRuntime::fromProvider(
+                provider: $llm,
+                events: $this->events,
+                httpClient: $this->httpClient,
+            ),
         );
     }
 
@@ -122,22 +103,12 @@ class ToolCallingDriver implements CanUseTools, CanAcceptEventHandler, CanAccept
 
     #[\Override]
     public function withMessageCompiler(CanCompileMessages $compiler): static {
-        return new self(
-            llm: $this->llm,
-            httpClient: $this->httpClient,
-            toolChoice: $this->toolChoice,
-            responseFormat: $this->responseFormat,
-            model: $this->model,
-            options: $this->options,
-            mode: $this->mode,
-            messageCompiler: $compiler,
-            retryPolicy: $this->retryPolicy,
-            events: $this->events,
-        );
+        return $this->with(messageCompiler: $compiler);
     }
 
     #[Override]
     public function useTools(AgentState $state, Tools $tools, CanExecuteToolCalls $executor) : AgentState {
+        $state = $this->ensureStateLLMConfig($state);
         $context = $this->messageCompiler->compile($state);
         $response = $this->getToolCallResponse($state, $tools, $context);
         $toolCalls = $response->toolCalls();
@@ -154,17 +125,45 @@ class ToolCallingDriver implements CanUseTools, CanAcceptEventHandler, CanAccept
 
     // INTERNAL /////////////////////////////////////////////////
 
+    private function with(
+        ?LLMProvider $llm = null,
+        ?HttpClient $httpClient = null,
+        string|array|null $toolChoice = null,
+        ?array $responseFormat = null,
+        ?string $model = null,
+        ?array $options = null,
+        ?OutputMode $mode = null,
+        ?CanCompileMessages $messageCompiler = null,
+        ?InferenceRetryPolicy $retryPolicy = null,
+        ?CanCreateInference $inference = null,
+    ): static {
+        return new static(
+            inference: $inference ?? $this->inference,
+            llm: $llm ?? $this->llm,
+            httpClient: $httpClient ?? $this->httpClient,
+            toolChoice: $toolChoice ?? $this->toolChoice,
+            responseFormat: $responseFormat ?? $this->responseFormat,
+            model: $model ?? $this->model,
+            options: $options ?? $this->options,
+            mode: $mode ?? $this->mode,
+            messageCompiler: $messageCompiler ?? $this->messageCompiler,
+            retryPolicy: $retryPolicy ?? $this->retryPolicy,
+            events: $this->events,
+        );
+    }
+
     private function getToolCallResponse(AgentState $state, Tools $tools, Messages $messages) : InferenceResponse {
         $cache = $state->context()->toCachedContext($tools->toToolSchema());
         $cache = $cache->isEmpty() ? null : $cache;
         $requestStartedAt = new DateTimeImmutable();
-        $this->emitInferenceRequestStarted($state, $messages->count(), $this->model ?: null);
-        $response = $this->buildPendingInference($messages, $tools, $cache)->response();
+        $this->emitInferenceRequestStarted($state, $messages->count(), $this->resolveModel($state));
+        $response = $this->buildPendingInference($state, $messages, $tools, $cache)->response();
         $this->emitInferenceResponseReceived($state, $response, $requestStartedAt);
         return $response;
     }
 
     private function buildPendingInference(
+        AgentState $state,
         Messages $messages,
         Tools $tools,
         ?CachedInferenceContext $cache = null,
@@ -182,30 +181,20 @@ class ToolCallingDriver implements CanUseTools, CanAcceptEventHandler, CanAccept
         if ($hasTools) {
             $options = array_merge($options, ['parallel_tool_calls' => $this->parallelToolCalls]);
         }
-        $inference = (new Inference)
-            ->withLLMProvider($this->llm)
-            ->withMessages($messages->toArray())
-            ->withModel($this->model)
-            ->withTools($toolSchemas)
-            ->withToolChoice($hasTools ? $toolChoice : '')
-            ->withResponseFormat($this->responseFormat)
-            ->withOptions($options)
-            ->withOutputMode($this->mode);
-        if ($this->retryPolicy !== null) {
-            $inference = $inference->withRetryPolicy($this->retryPolicy);
-        }
-        if ($cache !== null) {
-            $inference = $inference->withCachedContext(
-                messages: $cache->messages()->toArray(),
-                tools: $cache->tools(),
-                toolChoice: $cache->toolChoice(),
-                responseFormat: $cache->responseFormat()->toArray(),
-            );
-        }
-        if ($this->httpClient !== null) {
-            $inference = $inference->withHttpClient($this->httpClient);
-        }
-        return $inference->create();
+
+        $request = new InferenceRequest(
+            messages: $messages,
+            model: $this->model,
+            tools: $toolSchemas,
+            toolChoice: $hasTools ? $toolChoice : '',
+            responseFormat: $this->responseFormat,
+            options: $options,
+            mode: $this->mode,
+            cachedContext: $cache,
+            retryPolicy: $this->retryPolicy,
+        );
+
+        return $this->inference->create($request);
     }
 
     private function buildStepFromResponse(
@@ -256,6 +245,23 @@ class ToolCallingDriver implements CanUseTools, CanAcceptEventHandler, CanAccept
             return null;
         }
         return $json->toArray();
+    }
+
+    private function ensureStateLLMConfig(AgentState $state): AgentState {
+        if ($state->llmConfig() !== null) {
+            return $state;
+        }
+
+        return $state->withLLMConfig($this->llm->resolveConfig());
+    }
+
+    private function resolveModel(AgentState $state): ?string {
+        if ($this->model !== '') {
+            return $this->model;
+        }
+
+        $model = $state->llmConfig()?->model ?? '';
+        return $model !== '' ? $model : null;
     }
 
     // EVENT EMISSION ////////////////////////////////////////////

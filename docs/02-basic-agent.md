@@ -57,12 +57,28 @@ Use `with()` to swap components on the default loop:
 
 ```php
 use Cognesy\Agents\Drivers\ReAct\ReActDriver;
+use Cognesy\Events\EventBusResolver;
+use Cognesy\Instructor\Creation\StructuredOutputConfigBuilder;
+use Cognesy\Instructor\StructuredOutputRuntime;
+use Cognesy\Polyglot\Inference\InferenceRuntime;
+use Cognesy\Polyglot\Inference\LLMProvider;
 
 // Add tools
 $loop = AgentLoop::default()->withTool($myTool);
 
 // Swap driver
-$loop = AgentLoop::default()->withDriver(new ReActDriver(model: 'gpt-4o'));
+$events = EventBusResolver::using(null);
+$inference = InferenceRuntime::fromProvider(LLMProvider::new(), events: $events);
+$structuredOutput = new StructuredOutputRuntime(
+    inference: $inference,
+    events: $events,
+    config: (new StructuredOutputConfigBuilder())->create(),
+);
+$loop = AgentLoop::default()->withDriver(new ReActDriver(
+    inference: $inference,
+    structuredOutput: $structuredOutput,
+    model: 'gpt-4o',
+));
 ```
 
 ## System Prompt
@@ -81,10 +97,10 @@ For more complex agents, use `AgentBuilder` to compose capabilities:
 use Cognesy\Agents\Builder\AgentBuilder;
 use Cognesy\Agents\Capability\Bash\UseBash;
 use Cognesy\Agents\Capability\Core\UseGuards;
-use Cognesy\Agents\Capability\Core\UseLlmConfig;
+use Cognesy\Agents\Capability\Core\UseLLMConfig;
 
 $agent = AgentBuilder::base()
-    ->withCapability(new UseLlmConfig(preset: 'anthropic'))
+    ->withCapability(new UseLLMConfig(preset: 'anthropic'))
     ->withCapability(new UseBash())
     ->withCapability(new UseGuards(maxSteps: 10))
     ->build();

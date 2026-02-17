@@ -9,6 +9,7 @@ use Cognesy\Agents\Continuation\StopReason;
 use Cognesy\Agents\Continuation\StopSignal;
 use Cognesy\Agents\Data\AgentState;
 use Cognesy\Agents\Drivers\CanUseTools;
+use Cognesy\Agents\Enums\ExecutionStatus;
 use Cognesy\Agents\Drivers\ToolCalling\ToolCallingDriver;
 use Cognesy\Agents\Events\AgentExecutionCompleted;
 use Cognesy\Agents\Events\AgentExecutionFailed;
@@ -34,6 +35,7 @@ use Cognesy\Events\Contracts\CanHandleEvents;
 use Cognesy\Events\Dispatchers\EventDispatcher;
 use Cognesy\Polyglot\Inference\Data\ToolCall;
 use Cognesy\Polyglot\Inference\Data\Usage;
+use Cognesy\Polyglot\Inference\InferenceRuntime;
 use Cognesy\Polyglot\Inference\LLMProvider;
 use Throwable;
 
@@ -58,6 +60,7 @@ readonly class AgentLoop implements CanControlAgentLoop, CanAcceptEventHandler
         $events = new EventDispatcher('agent-loop');
         $interceptor = new PassThroughInterceptor();
         $tools = new Tools();
+        $llm = LLMProvider::new(ConfigResolver::default());
         return new self(
             tools: $tools,
             toolExecutor: new ToolExecutor(
@@ -66,7 +69,8 @@ readonly class AgentLoop implements CanControlAgentLoop, CanAcceptEventHandler
                 interceptor: $interceptor,
             ),
             driver: new ToolCallingDriver(
-                llm: LLMProvider::new($events, ConfigResolver::default()),
+                llm: $llm,
+                inference: InferenceRuntime::fromProvider($llm, events: $events),
                 messageCompiler: new ConversationWithCurrentToolTrace(),
                 events: $events,
             ),
@@ -125,6 +129,7 @@ readonly class AgentLoop implements CanControlAgentLoop, CanAcceptEventHandler
     // LIFECYCLE HOOKS ////////////////////////////////////
 
     protected function onBeforeExecution(AgentState $state): AgentState {
+        $state = $this->ensureNextExecution($state);
         $this->emitExecutionStarted($state, count($this->tools->names()));
         $state = $this->interceptor->intercept(HookContext::beforeExecution($state))->state();
         return $state;
@@ -182,6 +187,13 @@ readonly class AgentLoop implements CanControlAgentLoop, CanAcceptEventHandler
         $signal = StopSignal::fromStopException($stop);
         $this->emitStopSignalReceived($signal);
         return $state->withStopSignal($signal);
+    }
+
+    private function ensureNextExecution(AgentState $state): AgentState {
+        return match ($state->status()) {
+            ExecutionStatus::Completed, ExecutionStatus::Failed => $state->forNextExecution(),
+            default => $state,
+        };
     }
 
     protected function shouldStop(AgentState $state): bool {

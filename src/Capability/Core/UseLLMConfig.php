@@ -6,9 +6,10 @@ use Cognesy\Agents\Builder\Contracts\CanProvideAgentCapability;
 use Cognesy\Agents\Builder\Contracts\CanConfigureAgent;
 use Cognesy\Agents\Drivers\ToolCalling\ToolCallingDriver;
 use Cognesy\Polyglot\Inference\Config\InferenceRetryPolicy;
+use Cognesy\Polyglot\Inference\InferenceRuntime;
 use Cognesy\Polyglot\Inference\LLMProvider;
 
-final readonly class UseLlmConfig implements CanProvideAgentCapability
+final readonly class UseLLMConfig implements CanProvideAgentCapability
 {
     public function __construct(
         private ?string $preset = null,
@@ -36,6 +37,8 @@ final readonly class UseLlmConfig implements CanProvideAgentCapability
             new ToolCallingDriver(
                 llm: $llm,
                 retryPolicy: $retryPolicy,
+                events: $agent->events(),
+                inference: InferenceRuntime::fromProvider($llm, events: $agent->events()),
             )
         );
     }

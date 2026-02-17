@@ -23,30 +23,35 @@ use Cognesy\Agents\Events\InferenceResponseReceived;
 use Cognesy\Agents\Events\ValidationFailed;
 use Cognesy\Agents\Exceptions\AgentException;
 use Cognesy\Agents\Tool\Contracts\CanExecuteToolCalls;
-use Cognesy\Events\Contracts\CanAcceptEventHandler;
 use Cognesy\Events\Contracts\CanHandleEvents;
 use Cognesy\Events\EventBusResolver;
 use Cognesy\Http\HttpClient;
+use Cognesy\Instructor\Creation\StructuredOutputConfigBuilder;
 use Cognesy\Instructor\Data\CachedContext as StructuredCachedContext;
+use Cognesy\Instructor\Data\StructuredOutputRequest;
+use Cognesy\Instructor\Contracts\CanCreateStructuredOutput;
 use Cognesy\Instructor\PendingStructuredOutput;
-use Cognesy\Instructor\StructuredOutput;
+use Cognesy\Instructor\StructuredOutputRuntime;
 use Cognesy\Instructor\Validation\ValidationResult;
 use Cognesy\Messages\Message;
 use Cognesy\Messages\Messages;
 use Cognesy\Polyglot\Inference\Collections\ToolCalls;
-use Cognesy\Polyglot\Inference\Contracts\CanAcceptLLMProvider;
+use Cognesy\Polyglot\Inference\Config\LLMConfig;
+use Cognesy\Polyglot\Inference\Contracts\CanAcceptLLMConfig;
+use Cognesy\Polyglot\Inference\Contracts\CanCreateInference;
 use Cognesy\Polyglot\Inference\Data\CachedInferenceContext;
+use Cognesy\Polyglot\Inference\Data\InferenceRequest;
 use Cognesy\Polyglot\Inference\Data\InferenceResponse;
 use Cognesy\Polyglot\Inference\Data\ToolCall;
 use Cognesy\Polyglot\Inference\Data\Usage;
 use Cognesy\Polyglot\Inference\Enums\OutputMode;
-use Cognesy\Polyglot\Inference\Inference;
+use Cognesy\Polyglot\Inference\InferenceRuntime;
 use Cognesy\Polyglot\Inference\LLMProvider;
 use Cognesy\Polyglot\Inference\PendingInference;
 use Cognesy\Utils\Result\Result;
 use DateTimeImmutable;
 
-final class ReActDriver implements CanUseTools, CanAcceptEventHandler, CanAcceptLLMProvider, CanAcceptMessageCompiler
+final class ReActDriver implements CanUseTools, CanAcceptLLMConfig, CanAcceptMessageCompiler
 {
     private LLMProvider $llm;
     private ?HttpClient $httpClient = null;
@@ -59,8 +64,12 @@ final class ReActDriver implements CanUseTools, CanAcceptEventHandler, CanAccept
     private OutputMode $mode;
     private CanCompileMessages $messageCompiler;
     private CanHandleEvents $events;
+    private CanCreateInference $inference;
+    private CanCreateStructuredOutput $structuredOutput;
 
     public function __construct(
+        CanCreateInference $inference,
+        CanCreateStructuredOutput $structuredOutput,
         ?LLMProvider $llm = null,
         ?HttpClient $httpClient = null,
         string $model = '',
@@ -73,6 +82,8 @@ final class ReActDriver implements CanUseTools, CanAcceptEventHandler, CanAccept
         ?CanCompileMessages $messageCompiler = null,
         ?CanHandleEvents $events = null,
     ) {
+        $this->inference = $inference;
+        $this->structuredOutput = $structuredOutput;
         $this->llm = $llm ?? LLMProvider::new();
         $this->httpClient = $httpClient;
         $this->model = $model;
@@ -88,12 +99,13 @@ final class ReActDriver implements CanUseTools, CanAcceptEventHandler, CanAccept
 
     #[\Override]
     public function useTools(AgentState $state, Tools $tools, CanExecuteToolCalls $executor): AgentState {
+        $state = $this->ensureStateLLMConfig($state);
         $messages = $this->messageCompiler->compile($state);
         $system = $this->buildSystemPrompt($tools);
         $cachedContext = $this->structuredCachedContext($state);
 
         $requestStartedAt = new DateTimeImmutable();
-        $this->emitInferenceRequestStarted($state, $messages->count(), $this->model ?: null);
+        $this->emitInferenceRequestStarted($state, $messages->count(), $this->resolveModel($state));
 
         $extraction = Result::try(fn() => $this->extractDecision($messages, $system, $cachedContext));
 
@@ -135,7 +147,13 @@ final class ReActDriver implements CanUseTools, CanAcceptEventHandler, CanAccept
         $usage = $inferenceResponse->usage();
 
         if (!$decision->isCall()) {
-            $step = $this->buildFinalAnswerStep($decision, $usage, $inferenceResponse, $messages, $state->context()->toCachedContext());
+            $step = $this->buildFinalAnswerStep(
+                decision: $decision,
+                usage: $usage,
+                inferenceResponse: $inferenceResponse,
+                messages: $messages,
+                cachedContext: $state->context()->toCachedContext(),
+            );
             return $state->withCurrentStep($step);
         }
 
@@ -156,25 +174,29 @@ final class ReActDriver implements CanUseTools, CanAcceptEventHandler, CanAccept
 
     // ACCESSORS ///////////////////////////////////////////////////////////////
 
-    #[\Override]
-    public function llmProvider(): LLMProvider {
-        return $this->llm;
-    }
-
     // MUTATORS ////////////////////////////////////////////////////////////////
 
     #[\Override]
-    public function withLLMProvider(LLMProvider $llm): static {
-        $clone = clone $this;
-        $clone->llm = $llm;
-        return $clone;
-    }
-
-    #[\Override]
-    public function withEventHandler(CanHandleEvents $events): static {
-        $clone = clone $this;
-        $clone->events = $events;
-        return $clone;
+    public function withLLMConfig(LLMConfig $config): static {
+        $llm = $this->llm->withLLMConfig($config);
+        $inference = InferenceRuntime::fromProvider(
+            provider: $llm,
+            events: $this->events,
+            httpClient: $this->httpClient,
+        );
+        $structuredOutput = new StructuredOutputRuntime(
+            inference: $inference,
+            events: $this->events,
+            config: (new StructuredOutputConfigBuilder())
+                ->withOutputMode($this->mode)
+                ->withMaxRetries($this->maxRetries)
+                ->create(),
+        );
+        return $this->with(
+            llm: $llm,
+            inference: $inference,
+            structuredOutput: $structuredOutput,
+        );
     }
 
     #[\Override]
@@ -184,12 +206,41 @@ final class ReActDriver implements CanUseTools, CanAcceptEventHandler, CanAccept
 
     #[\Override]
     public function withMessageCompiler(CanCompileMessages $compiler): static {
-        $clone = clone $this;
-        $clone->messageCompiler = $compiler;
-        return $clone;
+        return $this->with(messageCompiler: $compiler);
     }
 
     // INTERNAL ////////////////////////////////////////////////////////////////
+
+    private function with(
+        ?LLMProvider $llm = null,
+        ?HttpClient $httpClient = null,
+        ?string $model = null,
+        ?array $options = null,
+        ?bool $finalViaInference = null,
+        ?string $finalModel = null,
+        ?array $finalOptions = null,
+        ?int $maxRetries = null,
+        ?OutputMode $mode = null,
+        ?CanCompileMessages $messageCompiler = null,
+        ?CanCreateInference $inference = null,
+        ?CanCreateStructuredOutput $structuredOutput = null,
+    ): self {
+        return new self(
+            inference: $inference ?? $this->inference,
+            structuredOutput: $structuredOutput ?? $this->structuredOutput,
+            llm: $llm ?? $this->llm,
+            httpClient: $httpClient ?? $this->httpClient,
+            model: $model ?? $this->model,
+            options: $options ?? $this->options,
+            finalViaInference: $finalViaInference ?? $this->finalViaInference,
+            finalModel: $finalModel ?? $this->finalModel,
+            finalOptions: $finalOptions ?? $this->finalOptions,
+            maxRetries: $maxRetries ?? $this->maxRetries,
+            mode: $mode ?? $this->mode,
+            messageCompiler: $messageCompiler ?? $this->messageCompiler,
+            events: $this->events,
+        );
+    }
 
     private function resolveInferenceResponse(AgentState $state, InferenceResponse $fallback): InferenceResponse {
         return $state->execution()?->currentStep()?->inferenceResponse() ?? $fallback;
@@ -199,7 +250,11 @@ final class ReActDriver implements CanUseTools, CanAcceptEventHandler, CanAccept
         return (new MakeReActPrompt($tools))();
     }
 
-    private function extractDecision(Messages $messages, string $system, ?StructuredCachedContext $cachedContext): DecisionWithDetails {
+    private function extractDecision(
+        Messages $messages,
+        string $system,
+        ?StructuredCachedContext $cachedContext,
+    ): DecisionWithDetails {
         $pending = $this->extractDecisionWithUsage(
             messages: $messages,
             system: $system,
@@ -223,27 +278,16 @@ final class ReActDriver implements CanUseTools, CanAcceptEventHandler, CanAccept
         string|array|object $decisionModel,
         ?StructuredCachedContext $cachedContext,
     ): PendingStructuredOutput {
-        $structured = (new StructuredOutput())
-            ->withSystem($system)
-            ->withMessages($messages)
-            ->withResponseModel($decisionModel)
-            ->withOutputMode($this->mode)
-            ->withModel($this->model)
-            ->withOptions($this->options)
-            ->withMaxRetries($this->maxRetries)
-            ->withLLMProvider($this->llm);
-        if ($cachedContext !== null && !$cachedContext->isEmpty()) {
-            $structured = $structured->withCachedContext(
-                messages: $cachedContext->messages()->toArray(),
-                system: $cachedContext->system(),
-                prompt: $cachedContext->prompt(),
-                examples: $cachedContext->examples(),
-            );
-        }
-        if ($this->httpClient !== null) {
-            $structured = $structured->withHttpClient($this->httpClient);
-        }
-        return $structured->create();
+        $request = new StructuredOutputRequest(
+            messages: $messages,
+            requestedSchema: $decisionModel,
+            system: $system,
+            model: $this->model,
+            options: $this->options,
+            cachedContext: $cachedContext,
+        );
+
+        return $this->structuredOutput->create($request);
     }
 
     private function buildValidationFailureStep(ValidationResult $validation, Messages $context): AgentStep {
@@ -317,21 +361,23 @@ final class ReActDriver implements CanUseTools, CanAcceptEventHandler, CanAccept
             ['role' => 'system', 'content' => 'Return only the final answer as plain text.'],
             ...$messages->toArray(),
         ]);
-        $inference = (new Inference)
-            ->withLLMProvider($this->llm)
-            ->withMessages($finalMessages->toArray())
-            ->withModel($this->finalModel ?: $this->model)
-            ->withOptions($this->finalOptions ?: $this->options)
-            ->withOutputMode(OutputMode::Text);
-        if (!$cache->isEmpty()) {
-            $inference = $inference->withCachedContext(
+
+        $cachedContext = match ($cache->isEmpty()) {
+            true => null,
+            default => new CachedInferenceContext(
                 messages: $cache->messages()->toArray(),
-            );
-        }
-        if ($this->httpClient !== null) {
-            $inference = $inference->withHttpClient($this->httpClient);
-        }
-        return $inference->create();
+            ),
+        };
+
+        $request = new InferenceRequest(
+            messages: $finalMessages,
+            model: $this->finalModel ?: $this->model,
+            options: $this->finalOptions ?: $this->options,
+            mode: OutputMode::Text,
+            cachedContext: $cachedContext,
+        );
+
+        return $this->inference->create($request);
     }
 
     private function withToolCalls(InferenceResponse $response, ToolCalls $toolCalls): InferenceResponse {
@@ -357,6 +403,23 @@ final class ReActDriver implements CanUseTools, CanAcceptEventHandler, CanAccept
         return new StructuredCachedContext(
             messages: [['role' => 'system', 'content' => $systemPrompt]],
         );
+    }
+
+    private function ensureStateLLMConfig(AgentState $state): AgentState {
+        if ($state->llmConfig() !== null) {
+            return $state;
+        }
+
+        return $state->withLLMConfig($this->llm->resolveConfig());
+    }
+
+    private function resolveModel(AgentState $state): ?string {
+        if ($this->model !== '') {
+            return $this->model;
+        }
+
+        $model = $state->llmConfig()?->model ?? '';
+        return $model !== '' ? $model : null;
     }
 
     // EVENT EMISSION ////////////////////////////////////////////

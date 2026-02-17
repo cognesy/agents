@@ -14,12 +14,14 @@ use Cognesy\Agents\Collections\Tools;
 use Cognesy\Agents\Data\AgentState;
 use Cognesy\Agents\Enums\AgentStepType;
 use Cognesy\Agents\Hook\Collections\HookTriggers;
-use Cognesy\Agents\Tests\Support\FakeInferenceDriver;
+use Cognesy\Agents\Drivers\ToolCalling\ToolCallingDriver;
+use Cognesy\Agents\Tests\Support\FakeInferenceRequestDriver;
 use Cognesy\Agents\Tests\Support\TestHelpers;
 use Cognesy\Messages\Messages;
 use Cognesy\Polyglot\Inference\Collections\ToolCalls;
 use Cognesy\Polyglot\Inference\Data\InferenceResponse;
 use Cognesy\Polyglot\Inference\Data\ToolCall;
+use Cognesy\Polyglot\Inference\InferenceRuntime;
 use Cognesy\Polyglot\Inference\LLMProvider;
 
 describe('Coding Agent Workflow', function () {
@@ -58,7 +60,7 @@ describe('Coding Agent Workflow', function () {
             ]),
         ]);
 
-        $driver = new FakeInferenceDriver([
+        $driver = new FakeInferenceRequestDriver([
             new InferenceResponse(content: '', toolCalls: new ToolCalls($writeCall)),
             new InferenceResponse(content: '', toolCalls: new ToolCalls($editCall)),
             new InferenceResponse(content: 'Config file created and updated.'),
@@ -72,7 +74,7 @@ describe('Coding Agent Workflow', function () {
         $llm = LLMProvider::new()->withDriver($driver);
         $agent = AgentBuilder::base()
             ->withCapability(new UseTools(...$tools->all()))
-            ->withCapability(new UseDriver(new \Cognesy\Agents\Drivers\ToolCalling\ToolCallingDriver(llm: $llm)))
+            ->withCapability(new UseDriver(new ToolCallingDriver(inference: InferenceRuntime::fromProvider($llm), llm: $llm)))
             ->build();
 
         $state = AgentState::empty()->withMessages(
@@ -112,7 +114,7 @@ describe('Coding Agent Workflow', function () {
             ]),
         ]);
 
-        $driver = new FakeInferenceDriver([
+        $driver = new FakeInferenceRequestDriver([
             new InferenceResponse(content: '', toolCalls: new ToolCalls($bashCall)),
             new InferenceResponse(content: '', toolCalls: new ToolCalls($writeCall)),
             new InferenceResponse(content: 'Environment verified and documented.'),
@@ -126,7 +128,7 @@ describe('Coding Agent Workflow', function () {
         $llm = LLMProvider::new()->withDriver($driver);
         $agent = AgentBuilder::base()
             ->withCapability(new UseTools(...$tools->all()))
-            ->withCapability(new UseDriver(new \Cognesy\Agents\Drivers\ToolCalling\ToolCallingDriver(llm: $llm)))
+            ->withCapability(new UseDriver(new ToolCallingDriver(inference: InferenceRuntime::fromProvider($llm), llm: $llm)))
             ->build();
 
         $state = AgentState::empty()->withMessages(
@@ -153,7 +155,7 @@ describe('Coding Agent Workflow', function () {
             ]),
         ]);
 
-        $driver = new FakeInferenceDriver([
+        $driver = new FakeInferenceRequestDriver([
             new InferenceResponse(content: '', toolCalls: new ToolCalls($todoCall)),
             new InferenceResponse(content: 'Tasks created.'),
         ]);
@@ -163,7 +165,7 @@ describe('Coding Agent Workflow', function () {
         $llm = LLMProvider::new()->withDriver($driver);
         $agent = AgentBuilder::base()
             ->withCapability(new UseTools(...$tools->all()))
-            ->withCapability(new UseDriver(new \Cognesy\Agents\Drivers\ToolCalling\ToolCallingDriver(llm: $llm)))
+            ->withCapability(new UseDriver(new ToolCallingDriver(inference: InferenceRuntime::fromProvider($llm), llm: $llm)))
             ->withCapability(new UseHook(new PersistTasksHook(), HookTriggers::afterStep()))
             ->build();
 
@@ -192,7 +194,7 @@ describe('Coding Agent Workflow', function () {
             ]),
         ]);
 
-        $driver = new FakeInferenceDriver([
+        $driver = new FakeInferenceRequestDriver([
             new InferenceResponse(content: '', toolCalls: new ToolCalls($writeCall)),
             new InferenceResponse(content: 'File written.'),
         ]);
@@ -202,7 +204,7 @@ describe('Coding Agent Workflow', function () {
         $llm = LLMProvider::new()->withDriver($driver);
         $agent = AgentBuilder::base()
             ->withCapability(new UseTools(...$tools->all()))
-            ->withCapability(new UseDriver(new \Cognesy\Agents\Drivers\ToolCalling\ToolCallingDriver(llm: $llm)))
+            ->withCapability(new UseDriver(new ToolCallingDriver(inference: InferenceRuntime::fromProvider($llm), llm: $llm)))
             ->build();
 
         $state = AgentState::empty()->withMessages(
@@ -252,7 +254,7 @@ describe('Coding Agent Workflow', function () {
             'arguments' => json_encode(['path' => $file2]),
         ]);
 
-        $driver = new FakeInferenceDriver([
+        $driver = new FakeInferenceRequestDriver([
             new InferenceResponse(content: '', toolCalls: new ToolCalls($write1)),
             new InferenceResponse(content: '', toolCalls: new ToolCalls($write2)),
             new InferenceResponse(content: '', toolCalls: new ToolCalls($read1, $read2)),
@@ -267,7 +269,7 @@ describe('Coding Agent Workflow', function () {
         $llm = LLMProvider::new()->withDriver($driver);
         $agent = AgentBuilder::base()
             ->withCapability(new UseTools(...$tools->all()))
-            ->withCapability(new UseDriver(new \Cognesy\Agents\Drivers\ToolCalling\ToolCallingDriver(llm: $llm)))
+            ->withCapability(new UseDriver(new ToolCallingDriver(inference: InferenceRuntime::fromProvider($llm), llm: $llm)))
             ->build();
 
         $state = AgentState::empty()->withMessages(
@@ -293,7 +295,7 @@ describe('Coding Agent Workflow', function () {
             'arguments' => json_encode(['path' => $testFile]),
         ]);
 
-        $driver = new FakeInferenceDriver([
+        $driver = new FakeInferenceRequestDriver([
             new InferenceResponse(content: '', toolCalls: new ToolCalls($readCall)),
             new InferenceResponse(content: 'File contains test content.'),
         ]);
@@ -303,7 +305,7 @@ describe('Coding Agent Workflow', function () {
         $llm = LLMProvider::new()->withDriver($driver);
         $agent = AgentBuilder::base()
             ->withCapability(new UseTools(...$tools->all()))
-            ->withCapability(new UseDriver(new \Cognesy\Agents\Drivers\ToolCalling\ToolCallingDriver(llm: $llm)))
+            ->withCapability(new UseDriver(new ToolCallingDriver(inference: InferenceRuntime::fromProvider($llm), llm: $llm)))
             ->build();
 
         $state = AgentState::empty()->withMessages(

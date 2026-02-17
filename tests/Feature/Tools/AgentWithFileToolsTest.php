@@ -7,7 +7,7 @@ use Cognesy\Agents\Collections\Tools;
 use Cognesy\Agents\Data\AgentState;
 use Cognesy\Agents\Drivers\ToolCalling\ToolCallingDriver;
 use Cognesy\Agents\Interception\PassThroughInterceptor;
-use Cognesy\Agents\Tests\Support\FakeInferenceDriver;
+use Cognesy\Agents\Tests\Support\FakeInferenceRequestDriver;
 use Cognesy\Agents\Tests\Support\TestAgentLoop;
 use Cognesy\Agents\Tests\Support\TestHelpers;
 use Cognesy\Agents\Tool\ToolExecutor;
@@ -16,6 +16,7 @@ use Cognesy\Messages\Messages;
 use Cognesy\Polyglot\Inference\Collections\ToolCalls;
 use Cognesy\Polyglot\Inference\Data\InferenceResponse;
 use Cognesy\Polyglot\Inference\Data\ToolCall;
+use Cognesy\Polyglot\Inference\InferenceRuntime;
 use Cognesy\Polyglot\Inference\LLMProvider;
 
 describe('Agent with File Tools', function () {
@@ -23,11 +24,18 @@ describe('Agent with File Tools', function () {
     beforeEach(function () {
         $this->tempDir = sys_get_temp_dir() . '/agent_file_test_' . uniqid();
         mkdir($this->tempDir, 0755, true);
-        $this->makeAgent = function (Tools $tools, FakeInferenceDriver $driver, int $maxIterations): TestAgentLoop {
+        $this->makeAgent = function (Tools $tools, FakeInferenceRequestDriver $driver, int $maxIterations): TestAgentLoop {
             $events = new EventDispatcher();
             $interceptor = new PassThroughInterceptor();
             $llm = LLMProvider::new()->withDriver($driver);
-            $toolDriver = new ToolCallingDriver(llm: $llm, events: $events);
+            $toolDriver = new ToolCallingDriver(
+                inference: InferenceRuntime::fromProvider(
+                    provider: $llm,
+                    events: $events,
+                ),
+                llm: $llm,
+                events: $events,
+            );
             $toolExecutor = new ToolExecutor($tools, events: $events, interceptor: $interceptor);
 
             return new TestAgentLoop(
@@ -55,7 +63,7 @@ describe('Agent with File Tools', function () {
             'arguments' => json_encode(['path' => $testFile]),
         ]);
 
-        $driver = new FakeInferenceDriver([
+        $driver = new FakeInferenceRequestDriver([
             new InferenceResponse(
                 content: '',
                 toolCalls: new ToolCalls($toolCall),
@@ -93,7 +101,7 @@ describe('Agent with File Tools', function () {
             'arguments' => json_encode(['path' => $testFile, 'content' => $content]),
         ]);
 
-        $driver = new FakeInferenceDriver([
+        $driver = new FakeInferenceRequestDriver([
             new InferenceResponse(
                 content: '',
                 toolCalls: new ToolCalls($toolCall),
@@ -133,7 +141,7 @@ describe('Agent with File Tools', function () {
             ]),
         ]);
 
-        $driver = new FakeInferenceDriver([
+        $driver = new FakeInferenceRequestDriver([
             new InferenceResponse(
                 content: '',
                 toolCalls: new ToolCalls($toolCall),
@@ -183,7 +191,7 @@ describe('Agent with File Tools', function () {
             ]),
         ]);
 
-        $driver = new FakeInferenceDriver([
+        $driver = new FakeInferenceRequestDriver([
             new InferenceResponse(content: '', toolCalls: new ToolCalls($writeCall)),
             new InferenceResponse(content: '', toolCalls: new ToolCalls($readCall)),
             new InferenceResponse(content: '', toolCalls: new ToolCalls($editCall)),
