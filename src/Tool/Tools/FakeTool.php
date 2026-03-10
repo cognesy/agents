@@ -8,7 +8,7 @@ use Cognesy\Polyglot\Inference\Data\ToolDefinition;
 use Cognesy\Utils\Json\EmptyObject;
 use Cognesy\Utils\Result\Result;
 
-final readonly class MockTool implements ToolInterface, CanDescribeTool
+final readonly class FakeTool implements ToolInterface, CanDescribeTool
 {
     /** @var \Closure(mixed ...): mixed */
     private \Closure $handler;
