@@ -1,6 +1,6 @@
 <?php declare(strict_types=1);
 
-namespace Cognesy\Agents\Tests\Feature\Capabilities;
+namespace Cognesy\Agents\Tests\Integration\Capabilities;
 
 use Cognesy\Agents\Builder\AgentBuilder;
 use Cognesy\Agents\Capability\Core\UseDriver;

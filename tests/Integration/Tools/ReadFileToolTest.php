@@ -1,6 +1,6 @@
 <?php declare(strict_types=1);
 
-namespace Cognesy\Agents\Tests\Unit\Tools;
+namespace Cognesy\Agents\Tests\Integration\Tools;
 
 use Cognesy\Agents\Capability\File\ReadFileTool;
 

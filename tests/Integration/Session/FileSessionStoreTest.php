@@ -1,6 +1,6 @@
 <?php declare(strict_types=1);
 
-namespace Cognesy\Agents\Tests\Feature\Session;
+namespace Cognesy\Agents\Tests\Integration\Session;
 
 use Cognesy\Agents\Data\AgentState;
 use Cognesy\Agents\Session\Collections\SessionInfoList;

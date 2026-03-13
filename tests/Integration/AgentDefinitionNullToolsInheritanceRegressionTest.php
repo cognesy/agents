@@ -1,6 +1,6 @@
 <?php declare(strict_types=1);
 
-namespace Cognesy\Agents\Tests\Regression;
+namespace Cognesy\Agents\Tests\Integration;
 
 use Cognesy\Agents\Capability\AgentCapabilityRegistry;
 use Cognesy\Agents\Capability\Core\UseDriver;

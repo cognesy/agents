@@ -1,6 +1,6 @@
 <?php declare(strict_types=1);
 
-namespace Cognesy\Agents\Tests\Unit\Agent;
+namespace Cognesy\Agents\Tests\Integration\Agent;
 
 use Cognesy\Agents\Exceptions\AgentNotFoundException;
 use Cognesy\Agents\Template\AgentDefinitionRegistry;
