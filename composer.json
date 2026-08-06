@@ -26,22 +26,22 @@
   "require": {
     "php": "^8.3",
     "composer-runtime-api": "^2.0",
-    "cognesy/instructor-contracts": "^2.6",
-    "cognesy/instructor-metrics": "^2.6",
+    "cognesy/instructor-contracts": "^2.7",
+    "cognesy/instructor-metrics": "^2.7",
     "ext-fileinfo": "*",
     "ext-libxml": "*",
-    "cognesy/instructor-dynamic": "^2.6",
-    "cognesy/instructor-events": "^2.6",
-    "cognesy/instructor-http-client": "^2.6",
+    "cognesy/instructor-dynamic": "^2.7",
+    "cognesy/instructor-events": "^2.7",
+    "cognesy/instructor-http-client": "^2.7",
     "cognesy/logging": "^2.3",
-    "cognesy/instructor-messages": "^2.6",
-    "cognesy/instructor-polyglot": "^2.6",
-    "cognesy/instructor-sandbox": "^2.6",
-    "cognesy/instructor-schema": "^2.6",
-    "cognesy/instructor-struct": "^2.6",
-    "cognesy/instructor-telemetry": "^2.6",
-    "cognesy/instructor-utils": "^2.6",
-    "cognesy/xprompt-php": "^2.6",
+    "cognesy/instructor-messages": "^2.7",
+    "cognesy/instructor-polyglot": "^2.7",
+    "cognesy/instructor-sandbox": "^2.7",
+    "cognesy/instructor-schema": "^2.7",
+    "cognesy/instructor-struct": "^2.7",
+    "cognesy/instructor-telemetry": "^2.7",
+    "cognesy/instructor-utils": "^2.7",
+    "cognesy/xprompt-php": "^2.7",
     "symfony/yaml": "^7.0 || ^8.0",
     "twig/twig": "^3.0"
   },
@@ -58,11 +58,28 @@
   "scripts": {
     "docs:self-knowledge:check": "@php scripts/sync-self-knowledge-docs.php --check",
     "docs:self-knowledge:write": "@php scripts/sync-self-knowledge-docs.php --write",
-    "tests": "@php vendor/bin/pest",
-    "phpstan": "@php vendor/bin/phpstan -c phpstan.neon",
-    "psalm": "@php vendor/bin/psalm"
+    "tests": "@php ../../vendor/bin/pest --configuration=phpunit.xml --bootstrap=../../vendor/autoload.php tests",
+    "phpstan": "@php ../../vendor/bin/phpstan analyse -c phpstan.neon --memory-limit=2G",
+    "psalm": "@php ../../vendor/bin/psalm --root=../.. --config=psalm.xml",
+    "pint": "@php ../../vendor/bin/pint --config pint.json src/",
+    "pint:test": "@php ../../vendor/bin/pint --config pint.json src/ --test",
+    "qa:docs": "bash ../../scripts/docs/docs-qa-all.sh agents",
+    "qa": [
+      "@tests",
+      "@phpstan",
+      "@psalm",
+      "@pint:test",
+      "@qa:docs",
+      "@docs:self-knowledge:check"
+    ]
   },
-  "suggest": {},
+  "bin": [
+    "bin/agents-eval"
+  ],
+  "suggest": {
+    "pestphp/pest": "Use PestEvalReporter to make eval runs fail Pest tests",
+    "phpunit/phpunit": "Use PHPUnitEvalReporter to make eval runs fail PHPUnit tests"
+  },
   "config": {
     "allow-plugins": {
       "pestphp/pest-plugin": true
