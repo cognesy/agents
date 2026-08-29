@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 
 namespace Cognesy\Agents\Drivers\ToolCalling;
 
@@ -39,6 +41,7 @@ use Cognesy\Polyglot\Inference\Data\ToolChoice;
 use Cognesy\Polyglot\Inference\Data\ToolDefinitions;
 use Cognesy\Polyglot\Inference\InferenceRuntime;
 use Cognesy\Polyglot\Inference\LLMProvider;
+use Cognesy\Polyglot\Inference\Reasoning\ReasoningSelection;
 use Cognesy\Telemetry\Domain\Envelope\OperationCorrelation;
 use Cognesy\Utils\Json\JsonExtractor;
 use DateTimeImmutable;
@@ -53,7 +56,7 @@ use Override;
  * @phpstan-consistent-constructor the private `with()` helper relies on `new static()`;
  *     no subclass in this repo overrides the constructor, so the promise holds.
  */
-class ToolCallingDriver implements CanUseTools, CanAcceptToolRuntime, CanAcceptLLMConfig, CanAcceptMessageCompiler, CanAcceptLifecycleInterceptor, CanResolveLLMConfig
+class ToolCallingDriver implements CanAcceptLifecycleInterceptor, CanAcceptLLMConfig, CanAcceptMessageCompiler, CanAcceptToolRuntime, CanResolveLLMConfig, CanUseTools
 {
     private LLMProvider $llm;
     private ?CanSendHttpRequests $httpClient = null;
@@ -70,6 +73,7 @@ class ToolCallingDriver implements CanUseTools, CanAcceptToolRuntime, CanAcceptL
     private Tools $tools;
     private CanExecuteToolCalls $executor;
     private CanInterceptAgentLifecycle $interceptor;
+    private ?ReasoningSelection $reasoning;
 
     public function __construct(
         CanCreateInference $inference,
@@ -85,6 +89,7 @@ class ToolCallingDriver implements CanUseTools, CanAcceptToolRuntime, CanAcceptL
         ?Tools $tools = null,
         ?CanExecuteToolCalls $executor = null,
         ?CanInterceptAgentLifecycle $interceptor = null,
+        ?ReasoningSelection $reasoning = null,
     ) {
         $this->inference = $inference;
         $this->llm = $llm ?? LLMProvider::new();
@@ -104,11 +109,13 @@ class ToolCallingDriver implements CanUseTools, CanAcceptToolRuntime, CanAcceptL
             interceptor: new PassThroughInterceptor(),
         );
         $this->interceptor = $interceptor ?? new PassThroughInterceptor();
+        $this->reasoning = $reasoning;
     }
 
     #[Override]
     public function withLLMConfig(LLMConfig $config): static {
         $llm = $this->llm->withLLMConfig($config);
+
         return $this->with(
             llm: $llm,
             inference: InferenceRuntime::fromProvider(
@@ -152,6 +159,14 @@ class ToolCallingDriver implements CanUseTools, CanAcceptToolRuntime, CanAcceptL
         return $this->with(retryPolicy: $retryPolicy);
     }
 
+    public function withReasoning(ReasoningSelection $reasoning): static {
+        return $this->with(reasoning: $reasoning);
+    }
+
+    public function reasoning(): ReasoningSelection {
+        return $this->reasoning ?? ReasoningSelection::providerDefault();
+    }
+
     #[Override]
     public function useTools(AgentState $state): AgentState {
         $state = $this->ensureStateLLMConfig($state);
@@ -168,6 +183,7 @@ class ToolCallingDriver implements CanUseTools, CanAcceptToolRuntime, CanAcceptL
             followUps: $messages,
             context: $inference->request()->messages(),
         );
+
         return $state->withCurrentStep($step);
     }
 
@@ -186,6 +202,7 @@ class ToolCallingDriver implements CanUseTools, CanAcceptToolRuntime, CanAcceptL
         ?Tools $tools = null,
         ?CanExecuteToolCalls $executor = null,
         ?CanInterceptAgentLifecycle $interceptor = null,
+        ?ReasoningSelection $reasoning = null,
     ): static {
         return new static(
             inference: $inference ?? $this->inference,
@@ -201,6 +218,7 @@ class ToolCallingDriver implements CanUseTools, CanAcceptToolRuntime, CanAcceptL
             tools: $tools ?? $this->tools,
             executor: $executor ?? $this->executor,
             interceptor: $interceptor ?? $this->interceptor,
+            reasoning: $reasoning ?? $this->reasoning,
         );
     }
 
@@ -219,6 +237,7 @@ class ToolCallingDriver implements CanUseTools, CanAcceptToolRuntime, CanAcceptL
         $state = $hookContext->state();
         $response = $hookContext->inferenceResponse() ?? $response;
         $this->emitInferenceResponseReceived($state, $response, $requestStartedAt, $pending->executionId());
+
         return new ToolCallingInference($state, $request, $response);
     }
 
@@ -247,6 +266,7 @@ class ToolCallingDriver implements CanUseTools, CanAcceptToolRuntime, CanAcceptL
             cachedContext: $cache,
             retryPolicy: $this->retryPolicy,
             telemetryCorrelation: $this->telemetryCorrelationFor($state),
+            reasoning: $this->reasoning,
         );
 
     }
@@ -270,6 +290,7 @@ class ToolCallingDriver implements CanUseTools, CanAcceptToolRuntime, CanAcceptL
         Messages $context,
     ): AgentStep {
         $outputMessages = $this->appendResponseContent($followUps, $response);
+
         return new AgentStep(
             inputMessages: $context,
             outputMessages: $outputMessages,
@@ -286,6 +307,7 @@ class ToolCallingDriver implements CanUseTools, CanAcceptToolRuntime, CanAcceptL
         if ($this->isToolArgsLeak($content, $response->toolCalls())) {
             return $messages;
         }
+
         return $messages->appendMessage(Message::asAssistant($content));
     }
 
@@ -302,6 +324,7 @@ class ToolCallingDriver implements CanUseTools, CanAcceptToolRuntime, CanAcceptL
                 return true;
             }
         }
+
         return false;
     }
 
@@ -323,6 +346,7 @@ class ToolCallingDriver implements CanUseTools, CanAcceptToolRuntime, CanAcceptL
         }
 
         $model = $state->llmConfig()?->model ?? '';
+
         return $model !== '' ? $model : null;
     }
 
