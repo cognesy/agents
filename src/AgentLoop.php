@@ -8,6 +8,7 @@ use Cognesy\Agents\Continuation\AgentStopException;
 use Cognesy\Agents\Continuation\StopReason;
 use Cognesy\Agents\Continuation\StopSignal;
 use Cognesy\Agents\Data\AgentState;
+use Cognesy\Agents\Data\AgentStep;
 use Cognesy\Agents\Drivers\CanAcceptToolRuntime;
 use Cognesy\Agents\Drivers\CanUseTools;
 use Cognesy\Agents\Drivers\ToolCalling\ToolCallingDriver;
@@ -144,6 +145,10 @@ readonly class AgentLoop implements CanControlAgentLoop, CanAcceptEventHandler
                 } catch (AgentStopException $stop) {
                     $state = $this->handleStopException($state, $stop);
                 } catch (Throwable $error) {
+                    $state = match (true) {
+                        $stepStarted && !$state->hasCurrentStep() => $state->withCurrentStep(AgentStep::empty()),
+                        default => $state,
+                    };
                     $state = $this->onError($state, $error);
                 } finally {
                     if ($stepStarted) {
@@ -199,7 +204,9 @@ readonly class AgentLoop implements CanControlAgentLoop, CanAcceptEventHandler
 
     private function onStop(AgentState $state): AgentState {
         $state = $this->interceptor->intercept(HookContext::onStop($state))->state();
-        $this->emitExecutionStopped($state);
+        if ($state->withExecutionCompleted()->status() === ExecutionStatus::Stopped) {
+            $this->emitExecutionStopped($state);
+        }
         return $state;
     }
 
@@ -433,7 +440,7 @@ readonly class AgentLoop implements CanControlAgentLoop, CanAcceptEventHandler
             parentAgentId: $state->parentAgentId() !== null ? (string) $state->parentAgentId() : null,
             stepNumber: $state->stepCount() + 1,
             messageCount: $state->messages()->count(),
-            availableTools: 0,
+            availableTools: $this->tools->count(),
             messages: $state->messages()->toArray(),
         );
 
